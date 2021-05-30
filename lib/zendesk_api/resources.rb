@@ -122,6 +122,8 @@ module ZendeskAPI
     put :clear_badge
   end
 
+  class OrganizationRelated < DataResource; end
+
   class Organization < Resource
     extend CreateMany
     extend CreateOrUpdate
@@ -129,6 +131,7 @@ module ZendeskAPI
 
     has Ability, :inline => true
     has Group
+    has :related, :class => OrganizationRelated
 
     has_many Ticket
     has_many User
@@ -474,6 +477,15 @@ module ZendeskAPI
     put :recover
   end
 
+  class DeletedTicket < ReadResource
+    include Destroy
+    extend DestroyMany
+
+    # Restores this previously deleted ticket to an actual ticket
+    put :restore
+    put :restore_many
+  end
+
   class UserViewRow < DataResource
     has User
     def self.model_key
@@ -751,6 +763,10 @@ module ZendeskAPI
       # Needed for proper Role sideloading
       self.role_id = role.name if key?(:role)
     end
+  end
+
+  class DeletedUser < ReadResource
+    include Destroy
   end
 
   class UserField < Resource; end
