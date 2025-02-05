@@ -49,6 +49,15 @@ describe ZendeskAPI::Collection do
       assert_requested(:put, %r{bulk_test_resources/update_many\?ids=1,2,3$})
     end
 
+    it "should defer #create_or_update to the resource class" do
+      resource = ZendeskAPI::Collection.new(client, ZendeskAPI::CreateOrUpdateTestResource)
+      stub_json_request(:post, %r{create_or_update_test_resources/create_or_update}, json(create_or_update_test_resource: { param: "abc" }))
+
+      resource.create_or_update!
+
+      assert_requested(:post, %r{create_or_update_test_resources/create_or_update$})
+    end
+
     it "should defer #create to the resource class" do
       stub_json_request(:post, %r{test_resources$}, json(:test_resource => {}))
       subject.create
@@ -340,17 +349,6 @@ describe ZendeskAPI::Collection do
           :test_resources => [{ :id => 2 }],
           :next_page => "/test_resources?page=2"
         ))
-      end
-
-      xit "should yield resource and page (and not infinitely loop)" do
-        expect do |b|
-          Timeout.timeout(5) do
-            silence_logger { subject.all(&b) }
-          end
-        end.to yield_successive_args(
-          [ZendeskAPI::TestResource.new(client, :id => 1), 1],
-          [ZendeskAPI::TestResource.new(client, :id => 2), 2]
-        )
       end
     end
 
@@ -860,6 +858,36 @@ describe ZendeskAPI::Collection do
 
     it "should not blow up" do
       expect(subject.to_a).to eq([])
+    end
+  end
+
+  context "with a module (SearchExport)" do
+    subject { ZendeskAPI::Collection.new(client, ZendeskAPI::SearchExport, :query => "hello") }
+
+    it "should not blow up" do
+      stub_json_request(:get, %r{search/export\?query=hello}, json(:results => []))
+
+      expect(subject.to_a).to eq([])
+    end
+
+    it "should not have more results" do
+      stub_json_request(:get, %r{search/export\?query=hello}, json(:results => [],
+                                                                   :meta => { has_more: false }))
+
+      subject.fetch
+      response = subject.instance_variable_get(:@response).body
+      expect(subject.more_results?(response)).to be(false)
+      expect(subject.has_more_results?(response)).to be(false)
+    end
+
+    it "should not have more pages data" do
+      stub_json_request(:get, %r{search/export\?query=hello}, json(:results => [],
+                                                                   :meta => { has_more: false },
+                                                                   :links => { :next => nil }))
+
+      subject.fetch
+      response = subject.instance_variable_get(:@response).body
+      expect(subject.get_next_page_data(response)).to eq(response)
     end
   end
 

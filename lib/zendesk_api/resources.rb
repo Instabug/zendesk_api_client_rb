@@ -5,10 +5,11 @@ module ZendeskAPI
   class User < Resource; end
   class UserRelated < DataResource; end
   class Category < Resource; end
-  class OrganizationMembership < ReadResource; end
   class OrganizationSubscription < ReadResource; end
 
   # @internal Begin actual Resource definitions
+
+  class RecipientAddress < Resource; end
 
   class Locale < ReadResource; end
 
@@ -123,6 +124,10 @@ module ZendeskAPI
   end
 
   class OrganizationRelated < DataResource; end
+
+  class OrganizationMembership < ReadResource
+    extend CreateOrUpdate
+  end
 
   class Organization < Resource
     extend CreateMany
@@ -270,44 +275,6 @@ module ZendeskAPI
     has :requester, :class => User
     has Ticket
     has Group
-  end
-
-  class Search
-    class Result < Data; end
-
-    # Creates a search collection
-    def self.search(client, options = {})
-      unless (%w{query external_id} & options.keys.map(&:to_s)).any?
-        warn "you have not specified a query for this search"
-      end
-
-      ZendeskAPI::Collection.new(client, self, options)
-    end
-
-    # Quack like a Resource
-    # Creates the correct resource class from the result_type passed in
-    def self.new(client, attributes)
-      result_type = attributes["result_type"]
-
-      if result_type
-        result_type = ZendeskAPI::Helpers.modulize_string(result_type)
-        klass = ZendeskAPI.const_get(result_type) rescue nil
-      end
-
-      (klass || Result).new(client, attributes)
-    end
-
-    class << self
-      def resource_name
-        "search"
-      end
-
-      alias :resource_path :resource_name
-
-      def model_key
-        "results"
-      end
-    end
   end
 
   class Request < Resource
@@ -790,6 +757,11 @@ module ZendeskAPI
   end
 
   class Target < Resource; end
+
+  class Invocation < Resource; end
+  class Webhook < Resource
+    has_many Invocation
+  end
 
   module Voice
     include DataNamespace

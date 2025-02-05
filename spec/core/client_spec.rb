@@ -22,6 +22,14 @@ describe ZendeskAPI::Client do
       end.to raise_error(ArgumentError)
     end
 
+    it "should raise an exception when url is multiline and ssl" do
+      expect do
+        ZendeskAPI::Client.new do |config|
+          config.url = "garbage\nhttps://www.google.com"
+        end
+      end.to raise_error(ArgumentError)
+    end
+
     it "should not raise an exception when url isn't ssl and allow_http is set to true" do
       expect do
         ZendeskAPI::Client.new do |config|
@@ -35,6 +43,20 @@ describe ZendeskAPI::Client do
       expect do
         ZendeskAPI::Client.new do |config|
           config.url = "https://example.zendesk.com/api/v2"
+        end.to_not raise_error
+      end
+    end
+
+    it "should handle valid url as a stringlike" do
+      expect do
+        url = Object.new
+
+        def url.to_str
+          "https://example.zendesk.com/api/v2"
+        end
+
+        ZendeskAPI::Client.new do |config|
+          config.url = url
         end.to_not raise_error
       end
     end
@@ -268,6 +290,32 @@ describe ZendeskAPI::Client do
 
     it 'raises if the resource does not exist' do
       expect { subject.random_resource }.to raise_error(RuntimeError)
+    end
+
+    context "when use_resource_cache is set to false" do
+      subject do
+        ZendeskAPI::Client.new do |config|
+          config.url = "https://example.zendesk.com/api/v2"
+          config.use_resource_cache = false
+        end
+      end
+
+      before(:each) do
+        stub_request(:get, %r{/bs$}).to_return(:status => 200)
+      end
+
+      it "returns an instance of ZendeskAPI::Collection" do
+        expect(subject.tickets).to be_instance_of(ZendeskAPI::Collection)
+      end
+
+      it "does not add collection to resource_cache" do
+        subject.tickets
+        expect(subject.instance_variable_get(:@resource_cache)).to be_empty
+      end
+
+      it "raises if the resource does not exist" do
+        expect { subject.random_resource }.to raise_error(RuntimeError)
+      end
     end
   end
 
