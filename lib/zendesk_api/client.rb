@@ -40,6 +40,11 @@ module ZendeskAPI
       method = method.to_s
       options = args.last.is_a?(Hash) ? args.pop : {}
 
+      unless config.use_resource_cache
+        raise "Resource for #{method} does not exist" unless method_as_class(method)
+        return ZendeskAPI::Collection.new(self, method_as_class(method), options)
+      end
+
       @resource_cache[method] ||= { :class => nil, :cache => ZendeskAPI::LRUCache.new }
       if !options.delete(:reload) && (cached = @resource_cache[method][:cache].read(options.hash))
         cached
@@ -177,7 +182,7 @@ module ZendeskAPI
         builder.use ZendeskAPI::Middleware::Request::EncodeJson
 
         # Should always be first in the stack
-        builder.use ZendeskAPI::Middleware::Request::Retry, :logger => config.logger if config.retry
+        builder.use ZendeskAPI::Middleware::Request::Retry, :logger => config.logger, :retry_codes => config.retry_codes, :retry_on_exception => config.retry_on_exception if config.retry
         if config.raise_error_when_rate_limited
           builder.use ZendeskAPI::Middleware::Request::RaiseRateLimited, :logger => config.logger
         end
@@ -194,7 +199,7 @@ module ZendeskAPI
     end
 
     def check_url
-      if !config.allow_http && config.url !~ /^https/
+      if !config.allow_http && !config.url.start_with?('https://')
         raise ArgumentError, "zendesk_api is ssl only; url must begin with https://"
       end
     end

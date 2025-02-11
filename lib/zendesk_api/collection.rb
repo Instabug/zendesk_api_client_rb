@@ -1,5 +1,6 @@
 require 'zendesk_api/resource'
 require 'zendesk_api/resources'
+require 'zendesk_api/search'
 
 module ZendeskAPI
   # Represents a collection of resources. Lazily loaded, resources aren't
@@ -28,7 +29,7 @@ module ZendeskAPI
     # @param [String] resource The resource being collected.
     # @param [Hash] options Any additional options to be passed in.
     def initialize(client, resource, options = {})
-      @client, @resource_class, @resource = client, resource, resource.resource_name
+      @client, @resource_class, @resource = client, resource, resource.resource_path
       @options = SilentMash.new(options)
 
       set_association_from_options
@@ -47,7 +48,7 @@ module ZendeskAPI
     end
 
     # Methods that take a Hash argument
-    methods = %w{create find update update_many destroy}
+    methods = %w{create find update update_many destroy create_or_update}
     methods += methods.map { |method| method + "!" }
     methods.each do |deferrable|
       # Passes arguments and the proper path to the resource class method.
@@ -185,9 +186,15 @@ module ZendeskAPI
       elsif association && association.options.parent && association.options.parent.new_record?
         return (@resources = [])
       end
+      path_query_link = (@query || path)
 
-      @response = get_response(@query || path)
-      handle_response(@response.body)
+      @response = get_response(path_query_link)
+
+      if path_query_link == "search/export"
+        handle_cursor_response(@response.body)
+      else
+        handle_response(@response.body)
+      end
 
       @resources
     end
@@ -248,7 +255,7 @@ module ZendeskAPI
       if @options["page"]
         clear_cache
         @options["page"] += 1
-      elsif @query = @next_page
+      elsif (@query = @next_page)
         fetch(true)
       else
         clear_cache
@@ -264,7 +271,7 @@ module ZendeskAPI
       if @options["page"] && @options["page"] > 1
         clear_cache
         @options["page"] -= 1
-      elsif @query = @prev_page
+      elsif (@query = @prev_page)
         fetch(true)
       else
         clear_cache
@@ -313,10 +320,33 @@ module ZendeskAPI
       end
     end
 
-    alias :to_str :to_s
+    alias to_str to_s
 
     def to_param
       map(&:to_param)
+    end
+
+    def more_results?(response)
+      response["meta"].present? && response["results"].present?
+    end
+    alias_method :has_more_results?, :more_results? # For backward compatibility with 1.33.0 and 1.34.0
+
+    def get_response_body(link)
+      @client.connection.send("get", link).body
+    end
+
+    def get_next_page_data(original_response_body)
+      link = original_response_body["links"]["next"]
+
+      while link
+        response = get_response_body(link)
+
+        original_response_body["results"] = original_response_body["results"] + response["results"]
+
+        link = response["meta"]["has_more"] ? response["links"]["next"] : nil
+      end
+
+      original_response_body
     end
 
     private
@@ -372,8 +402,6 @@ module ZendeskAPI
       result
     end
 
-    ## Initialize
-
     def join_special_params
       # some params use comma-joined strings instead of query-based arrays for multiple values
       @options.each do |k, v|
@@ -389,7 +417,6 @@ module ZendeskAPI
       association_options = { :path => @options.delete(:path) }
       association_options[:path] ||= @collection_path.join("/") if @collection_path
       @association = @options.delete(:association) || Association.new(association_options.merge(:class => @resource_class))
-
       @collection_path ||= [@resource]
     end
 
@@ -407,6 +434,25 @@ module ZendeskAPI
         else
           req.params.merge!(opts)
         end
+      end
+    end
+
+    def handle_cursor_response(response_body)
+      unless response_body.is_a?(Hash)
+        raise ZendeskAPI::Error::NetworkError, @response.env
+      end
+
+      response_body = get_next_page_data(response_body) if more_results?(response_body)
+
+      body = response_body.dup
+      results = body.delete(@resource_class.model_key) || body.delete("results")
+
+      unless results
+        raise ZendeskAPI::Error::ClientError, "Expected #{@resource_class.model_key} or 'results' in response keys: #{body.keys.inspect}"
+      end
+
+      @resources = results.map do |res|
+        wrap_resource(res)
       end
     end
 
